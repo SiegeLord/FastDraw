@@ -28,11 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "fast_draw.h"
 
 #include <allegro5/allegro_primitives.h>
-#include <sallegro5/allegro_opengl.h>
+#include <allegro5/allegro_opengl.h>
 
 #include <stdlib.h>
 
-typedef struct FAST_DRAW_CACHE
+struct FAST_DRAW_CACHE
 {
 	ALLEGRO_VERTEX* vertices;
 	int* indices;
@@ -40,7 +40,7 @@ typedef struct FAST_DRAW_CACHE
 	size_t size;
 	ALLEGRO_BITMAP* bitmap;
 	bool use_indices;
-} FAST_DRAW_CACHE;
+};
 
 static void set_capacity(FAST_DRAW_CACHE* cache, size_t new_capacity)
 {
