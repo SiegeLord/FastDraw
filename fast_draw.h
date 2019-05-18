@@ -10,7 +10,9 @@ extern "C"
 
 typedef struct FAST_DRAW_CACHE FAST_DRAW_CACHE;
 
-FAST_DRAW_CACHE* fd_create_cache(size_t inital_size, bool use_indices);
+// When using buffers, initial_size is in fact the maximum size, so set it appropriately.
+// Otherwise, the cache will be resizes as necessary.
+FAST_DRAW_CACHE* fd_create_cache(size_t inital_size, bool use_indices, bool use_buffers);
 void fd_destroy_cache(FAST_DRAW_CACHE* cache);
 void fd_flush_cache(FAST_DRAW_CACHE* cache);
 

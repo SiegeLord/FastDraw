@@ -30,44 +30,102 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <allegro5/allegro_primitives.h>
 #include <allegro5/allegro_opengl.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 
 struct FAST_DRAW_CACHE
 {
 	ALLEGRO_VERTEX* vertices;
 	int* indices;
+	ALLEGRO_VERTEX_BUFFER* vertex_buffer;
+	ALLEGRO_INDEX_BUFFER* index_buffer;
 	size_t capacity;
 	size_t size;
 	ALLEGRO_BITMAP* bitmap;
 	bool use_indices;
+	bool use_buffers;
 };
 
-static void set_capacity(FAST_DRAW_CACHE* cache, size_t new_capacity)
+static bool set_capacity(FAST_DRAW_CACHE* cache, size_t new_capacity)
 {
 	assert(cache);
 
-	if(cache->use_indices)
+	//~ printf("%d %d %d!\n", cache->use_buffers, cache->capacity, new_capacity);
+
+	if(cache->use_buffers)
 	{
-		cache->vertices = realloc(cache->vertices, 4 * new_capacity * sizeof(ALLEGRO_VERTEX));
-		cache->indices = realloc(cache->indices, 6 * new_capacity * sizeof(int));
+		/* Vertex Buffers can't be resized at the moment. */
+		if(cache->vertex_buffer)
+		{
+			return false;
+		}
+		if(new_capacity == 0)
+		{
+			return false;
+		}
+		if(cache->use_indices)
+		{
+			cache->vertex_buffer = al_create_vertex_buffer(NULL, NULL, 4 * new_capacity, ALLEGRO_PRIM_BUFFER_STREAM);
+			if(!cache->vertex_buffer)
+			{
+				return false;
+			}
+			cache->index_buffer = al_create_index_buffer(4, NULL, 6 * new_capacity, ALLEGRO_PRIM_BUFFER_STREAM);
+			if(!cache->index_buffer)
+			{
+				al_destroy_vertex_buffer(cache->vertex_buffer);
+				return false;
+			}
+			cache->vertices = al_lock_vertex_buffer(cache->vertex_buffer, 0, 4 * new_capacity, ALLEGRO_LOCK_WRITEONLY);
+			cache->indices = al_lock_index_buffer(cache->index_buffer, 0, 6 * new_capacity, ALLEGRO_LOCK_WRITEONLY);
+		}
+		else
+		{
+			cache->vertex_buffer = al_create_vertex_buffer(NULL, NULL, 6 * new_capacity, ALLEGRO_PRIM_BUFFER_STREAM);
+			if(!cache->vertex_buffer)
+			{
+				return false;
+			}
+			cache->vertices = al_lock_vertex_buffer(cache->vertex_buffer, 0, 6 * new_capacity, ALLEGRO_LOCK_WRITEONLY);
+		}
 	}
 	else
 	{
-		cache->vertices = realloc(cache->vertices, 6 * new_capacity * sizeof(ALLEGRO_VERTEX));
+		if(cache->use_indices)
+		{
+			cache->vertices = realloc(cache->vertices, 4 * new_capacity * sizeof(ALLEGRO_VERTEX));
+			if(new_capacity && !cache->vertices)
+			{
+				return false;
+			}
+			cache->indices = realloc(cache->indices, 6 * new_capacity * sizeof(int));
+			if(new_capacity && !cache->indices)
+			{
+				free(cache->vertices);
+				return false;
+			}
+		}
+		else
+		{
+			cache->vertices = realloc(cache->vertices, 6 * new_capacity * sizeof(ALLEGRO_VERTEX));
+			if(new_capacity && !cache->vertices)
+			{
+				return false;
+			}
+		}
 	}
 
-	if(new_capacity)
-		assert(cache->vertices);
-	if(cache->use_indices && new_capacity)
-		assert(cache->indices);
-
 	cache->capacity = new_capacity;
+	return true;
 }
 
-static void get_pointers(FAST_DRAW_CACHE* cache, ALLEGRO_VERTEX** vertices, int** indices)
+static bool get_pointers(FAST_DRAW_CACHE* cache, ALLEGRO_VERTEX** vertices, int** indices)
 {
 	if(cache->size + 1 > cache->capacity)
-		set_capacity(cache, 3 * cache->capacity / 2 + 1);
+	{
+		if (!set_capacity(cache, 3 * cache->capacity / 2 + 1))
+			return false;
+	}
 
 	if(cache->use_indices)
 	{
@@ -80,13 +138,19 @@ static void get_pointers(FAST_DRAW_CACHE* cache, ALLEGRO_VERTEX** vertices, int*
 	}
 
 	cache->size++;
+	return true;
 }
 
-FAST_DRAW_CACHE* fd_create_cache(size_t initial_size, bool use_indices)
+FAST_DRAW_CACHE* fd_create_cache(size_t initial_size, bool use_indices, bool use_buffers)
 {
 	FAST_DRAW_CACHE* cache = calloc(1, sizeof(FAST_DRAW_CACHE));
 	cache->use_indices = use_indices;
-	set_capacity(cache, initial_size);
+	cache->use_buffers = use_buffers;
+	if(!set_capacity(cache, initial_size))
+	{
+		free(cache);
+		return NULL;
+	}
 	return cache;
 }
 
@@ -94,6 +158,8 @@ void fd_destroy_cache(FAST_DRAW_CACHE* cache)
 {
 	if(cache)
 	{
+		al_destroy_vertex_buffer(cache->vertex_buffer);
+		al_destroy_index_buffer(cache->index_buffer);
 		free(cache->indices);
 		free(cache->vertices);
 		free(cache);
@@ -107,10 +173,30 @@ void fd_flush_cache(FAST_DRAW_CACHE* cache)
 	if(cache->size == 0)
 		return;
 
-	if(cache->use_indices)
-		al_draw_indexed_prim(cache->vertices, 0, cache->bitmap, cache->indices, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+	if(cache->use_buffers)
+	{
+		if(cache->use_indices)
+		{
+			al_unlock_vertex_buffer(cache->vertex_buffer);
+			al_unlock_index_buffer(cache->index_buffer);
+			al_draw_indexed_buffer(cache->vertex_buffer, cache->bitmap, cache->index_buffer, 0, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+			cache->vertices = al_lock_vertex_buffer(cache->vertex_buffer, 0, 4 * cache->capacity, ALLEGRO_LOCK_WRITEONLY);
+			cache->indices = al_lock_index_buffer(cache->index_buffer, 0, 6 * cache->capacity, ALLEGRO_LOCK_WRITEONLY);
+		}
+		else
+		{
+			al_unlock_vertex_buffer(cache->vertex_buffer);
+			al_draw_vertex_buffer(cache->vertex_buffer, cache->bitmap, 0, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+			cache->vertices = al_lock_vertex_buffer(cache->vertex_buffer, 0, 6 * cache->capacity, ALLEGRO_LOCK_WRITEONLY);
+		}
+	}
 	else
-		al_draw_prim(cache->vertices, 0, cache->bitmap, 0, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+	{
+		if(cache->use_indices)
+			al_draw_indexed_prim(cache->vertices, 0, cache->bitmap, cache->indices, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+		else
+			al_draw_prim(cache->vertices, 0, cache->bitmap, 0, 6 * cache->size, ALLEGRO_PRIM_TRIANGLE_LIST);
+	}
 
 	cache->bitmap = 0;
 	cache->size = 0;
@@ -148,23 +234,26 @@ void fd_draw_tinted_bitmap_region(FAST_DRAW_CACHE* cache, ALLEGRO_BITMAP* bmp, A
 void fd_draw_tinted_scaled_bitmap(FAST_DRAW_CACHE* cache, ALLEGRO_BITMAP* bmp, ALLEGRO_COLOR tint, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh)
 {
 	int ii;
-	int offx = 0;
-	int offy = 0;
+	int offx = al_get_bitmap_x(bmp);
+	int offy = al_get_bitmap_y(bmp);
 	ALLEGRO_VERTEX* vertices;
 	int* indices;
 	ALLEGRO_BITMAP* parent = al_get_parent_bitmap(bmp);
 
 	if(parent == 0)
 		parent = bmp;
-	else
-		al_get_opengl_texture_position(bmp, &offx, &offy); /* HACK */
 
 	if(parent != cache->bitmap)
 		fd_flush_cache(cache);
 
-	cache->bitmap = parent;
+	if(!get_pointers(cache, &vertices, &indices))
+	{
+		fd_flush_cache(cache);
+		if(!get_pointers(cache, &vertices, &indices))
+			return;
+	}
 
-	get_pointers(cache, &vertices, &indices);
+	cache->bitmap = parent;
 
 	if(cache->use_indices)
 	{
